@@ -2277,6 +2277,7 @@ static int cpufreq_cpu_callback(struct notifier_block *nfb,
 
 static struct notifier_block __refdata cpufreq_cpu_notifier = {
 	.notifier_call = cpufreq_cpu_callback,
+	.priority = INT_MIN + 1,
 };
 
 /*********************************************************************
