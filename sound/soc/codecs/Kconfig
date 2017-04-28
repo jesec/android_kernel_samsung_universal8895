@@ -80,6 +80,7 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_MAX98095 if I2C
 	select SND_SOC_MAX98357A if GPIOLIB
 	select SND_SOC_MAX98925 if I2C
+	select SND_SOC_MAX98506 if I2C
 	select SND_SOC_MAX9850 if I2C
 	select SND_SOC_MAX9768 if I2C
 	select SND_SOC_MAX9877 if I2C
@@ -445,6 +446,9 @@ config SND_SOC_CX20442
 	tristate
 	depends on TTY
 
+config SND_SOC_COD3033X
+	tristate
+
 config SND_SOC_JZ4740_CODEC
 	select REGMAP_MMIO
 	tristate
@@ -521,6 +525,23 @@ config SND_SOC_MAX98357A
 
 config SND_SOC_MAX98925
        tristate
+
+config SND_SOC_MAX98506
+	bool "Support MAX98506"
+	depends on I2C
+	help
+	MAX98506 driver
+
+config SND_SOC_MAXIM_DSM
+	bool "Support MAXIM DSM"
+	depends on SND_SOC_MAX98504 || SND_SOC_MAX98505 || SND_SOC_MAX98506
+	help
+	MAXIM DSM driver
+
+config SND_SOC_MAXIM_DSM_CAL
+	tristate "Support MAXIM DSM Calibration"
+	help
+	MAX9850x Calibration Driver
 
 config SND_SOC_MAX9850
 	tristate
@@ -920,6 +941,9 @@ config SND_SOC_WM9712
 	tristate
 
 config SND_SOC_WM9713
+	tristate
+
+config SND_SOC_DUMMY_CODEC
 	tristate
 
 # Amp

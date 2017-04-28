@@ -71,6 +71,20 @@
 	.if	\regsize == 32
 	mov	w0, w0				// zero upper 32 bits of x0
 	.endif
+
+#ifdef CONFIG_SOC_EXYNOS8895
+	.if     \regsize == 32
+	.if     \el == 0
+	msr     cntp_cval_el0, x0
+	mov     x0, sp
+	lsr     x0, x0, #12
+	tlbi    vaae1, x0
+	dsb     nsh
+	mrs     x0, cntp_cval_el0
+	.endif
+	.endif
+#endif
+
 	stp	x0, x1, [sp, #16 * 0]
 	stp	x2, x3, [sp, #16 * 1]
 	stp	x4, x5, [sp, #16 * 2]
@@ -105,6 +119,7 @@
 	mrs	x23, spsr_el1
 	stp	lr, x21, [sp, #S_LR]
 	stp	x22, x23, [sp, #S_PC]
+	add	x29, sp, #S_FP			// Pretend as if &pt_regs[29] is current fp
 
 	/*
 	 * Set syscallno to -1 by default (overridden later if real syscall).
@@ -139,11 +154,24 @@
 alternative_if_not ARM64_WORKAROUND_845719
 	nop
 	nop
+	nop
+	nop
+	nop
+	nop
+	nop
 #ifdef CONFIG_PID_IN_CONTEXTIDR
 	nop
 #endif
 alternative_else
 	tbz	x22, #4, 1f
+
+	/* skip ERRATUM non-CA53 core */
+	mrs	x29, midr_el1
+	lsr	x29, x29, #0x4			// part number shift
+	and	x29, x29, #0xfff		// part number mask
+	cmp	x29, #0xd03			// ARMV8_CORTEXA53
+	b.ne	1f
+
 #ifdef CONFIG_PID_IN_CONTEXTIDR
 	mrs	x29, contextidr_el1
 	msr	contextidr_el1, x29
@@ -242,7 +270,7 @@ END(vectors)
  * Invalid mode handlers
  */
 	.macro	inv_entry, el, reason, regsize = 64
-	kernel_entry el, \regsize
+	kernel_entry \el, \regsize
 	mov	x0, sp
 	mov	x1, #\reason
 	mrs	x2, esr_el1
@@ -299,6 +327,8 @@ el1_sync:
 	kernel_entry 1
 	mrs	x1, esr_el1			// read the syndrome register
 	lsr	x24, x1, #ESR_ELx_EC_SHIFT	// exception class
+	cmp	x24, #ESR_ELx_EC_IABT_CUR	// instruction abort in EL1
+	b.eq	el1_iabt
 	cmp	x24, #ESR_ELx_EC_DABT_CUR	// data abort in EL1
 	b.eq	el1_da
 	cmp	x24, #ESR_ELx_EC_SYS64		// configurable trap
@@ -312,12 +342,28 @@ el1_sync:
 	cmp	x24, #ESR_ELx_EC_BREAKPT_CUR	// debug exception in EL1
 	b.ge	el1_dbg
 	b	el1_inv
+el1_iabt:
+	// TODO: add support for undefined instructions in kernel mode
+	enable_dbg
+	mov	x0, sp
+	mrs	x2, far_el1
+	b	do_iabt
+
 el1_da:
 	/*
 	 * Data abort handling
 	 */
 	mrs	x0, far_el1
+
 	enable_dbg
+
+	/*
+	 * tlb conflict handling
+	*/
+	and	x24, x1, #ESR_EL1_ISS_DFSC_MASK
+	cmp	x24, #ESR_EL1_ISS_DFSC_TLB_CONFLICT
+	b.eq	el1_da_tlb_conflict
+
 	// re-enable interrupts if they were enabled in the aborted context
 	tbnz	x23, #7, 1f			// PSR_I_BIT
 	enable_irq
@@ -327,6 +373,10 @@ el1_da:
 
 	// disable interrupts before pulling preserved data off the stack
 	disable_irq
+	kernel_exit 1
+el1_da_tlb_conflict:
+	tlbi vmalle1
+	dsb nsh
 	kernel_exit 1
 el1_sp_pc:
 	/*
@@ -342,7 +392,10 @@ el1_undef:
 	 */
 	enable_dbg
 	mov	x0, sp
-	b	do_undefinstr
+	mrs	x1, esr_el1			// read the syndrome register
+	mrs	x2, elr_el1
+
+	b	do_undefinstr_el1
 el1_dbg:
 	/*
 	 * Debug exception handling
@@ -542,6 +595,7 @@ el0_undef:
 	enable_dbg_and_irq
 	ct_user_exit
 	mov	x0, sp
+	mrs	x1, esr_el1			// read the syndrome register
 	bl	do_undefinstr
 	b	ret_to_user
 el0_dbg:

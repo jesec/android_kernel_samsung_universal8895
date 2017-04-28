@@ -66,6 +66,7 @@ extern void madera_set_headphone_imp(struct madera_extcon_info *info,
 
 extern const struct madera_jd_state madera_hpdet_left;
 extern const struct madera_jd_state madera_hpdet_right;
+extern const struct madera_jd_state madera_hpdet_moisture;
 extern const struct madera_jd_state madera_micd_button;
 extern const struct madera_jd_state madera_micd_microphone;
 extern const struct madera_jd_state madera_micd_adc_mic;
@@ -77,6 +78,7 @@ extern int madera_hpdet_reading(struct madera_extcon_info *info, int val);
 
 extern int madera_micd_start(struct madera_extcon_info *info);
 extern void madera_micd_stop(struct madera_extcon_info *info);
+extern int madera_micd_button_start(struct madera_extcon_info *info);
 extern int madera_micd_button_reading(struct madera_extcon_info *info, int val);
 
 extern int madera_micd_mic_start(struct madera_extcon_info *info);
@@ -86,5 +88,7 @@ extern int madera_micd_mic_timeout_ms(struct madera_extcon_info *info);
 extern void madera_micd_mic_timeout(struct madera_extcon_info *info);
 
 extern void madera_extcon_report(struct madera_extcon_info *info, int state);
+
+extern int madera_extcon_manual_mic_reading(struct madera_extcon_info *info);
 
 #endif
