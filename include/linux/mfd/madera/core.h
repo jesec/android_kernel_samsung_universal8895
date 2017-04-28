@@ -72,6 +72,8 @@ struct madera {
 	struct mutex reg_setting_lock;
 
 	struct blocking_notifier_head notifier;
+
+	bool moisture_detected;
 };
 
 extern int madera_of_read_uint_array(struct madera *madera, const char *prop,
@@ -100,4 +102,7 @@ static inline int madera_call_notifiers(struct madera *madera,
 {
 	return blocking_notifier_call_chain(&madera->notifier, event, data);
 }
+
+void madera_reboot_codec(struct madera *madera);
+
 #endif

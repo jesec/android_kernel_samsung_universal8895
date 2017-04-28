@@ -91,9 +91,11 @@ EXPORT_SYMBOL_GPL(madera_set_irq_wake);
 
 static irqreturn_t madera_irq_thread(int irq, void *data)
 {
+	static int bad_irq_count;
 	struct madera_irq_priv *priv = data;
 	bool poll;
 	int ret;
+	unsigned int val, val2;
 
 	dev_dbg(priv->dev, "irq_thread handler\n");
 
@@ -108,6 +110,104 @@ static irqreturn_t madera_irq_thread(int irq, void *data)
 
 	do {
 		poll = false;
+
+		if (bad_irq_count >= 10) {
+			regmap_read(priv->madera->regmap,
+				    MADERA_INTERRUPT_RAW_STATUS_1,
+				    &val);
+			if (!(val & 0x1)) {
+				regmap_read(priv->madera->regmap,
+					    MADERA_SOFTWARE_RESET,
+					    &val2);
+				dev_info(priv->madera->dev,
+					 "IRQ status: 0x%x (san: 0x%x)\n",
+					 val, val2);
+			}
+		}
+		{
+			unsigned int irqreg = MADERA_IRQ1_STATUS_1;
+			unsigned int mskreg = MADERA_IRQ1_MASK_1;
+			unsigned int irqval, mskval;
+			bool irq_req = false;
+
+			regmap_read(priv->madera->regmap, MADERA_IRQ1_STATUS_6,
+				    &irqval);
+			if (!(irqval & (MADERA_MICDET1_EINT1 |
+					MADERA_HPDET_EINT1))) {
+				regmap_read(priv->madera->regmap,
+					    MADERA_IRQ1_STATUS_7,
+					    &irqval);
+				if (!(irqval & (MADERA_MICD_CLAMP_FALL_EINT1 |
+						MADERA_MICD_CLAMP_RISE_EINT1))) {
+					irq_req = true;
+				}
+			}
+
+			while (irq_req && irqreg <= MADERA_IRQ1_STATUS_40) {
+				regmap_read(priv->madera->regmap, irqreg++,
+					    &irqval);
+				regmap_read(priv->madera->regmap, mskreg++,
+					    &mskval);
+
+				if (irqval)
+					dev_info(priv->madera->dev, "IRQ reg: 0x%x: 0x%x\n",
+						 (irqreg - 1), irqval);
+
+				irqval &= ~mskval;
+				if (irqval)
+					break;
+			}
+
+			if (irqreg > MADERA_IRQ1_STATUS_40) {
+				if (bad_irq_count >= 10)
+					dev_info(priv->madera->dev,
+						 "nIRQ: %d\n",
+						 bad_irq_count);
+				if (++bad_irq_count >= 100) {
+					regmap_read(priv->madera->regmap,
+						    MADERA_SOFTWARE_RESET,
+						    &val);
+					dev_err(priv->madera->dev,
+						"0x%x: 0x%x\n",
+						MADERA_SOFTWARE_RESET,
+						val);
+					regmap_read(priv->madera->regmap,
+						    MADERA_HARDWARE_REVISION,
+						    &val);
+					dev_err(priv->madera->dev,
+						"0x%x: 0x%x\n",
+						MADERA_HARDWARE_REVISION, val);
+					regmap_read(priv->madera->regmap,
+						    0x158, &val);
+					dev_err(priv->madera->dev,
+						"0x158: 0x%x\n", val);
+					regmap_read(priv->madera->regmap,
+						    0x159, &val);
+					dev_err(priv->madera->dev,
+						"0x159: 0x%x\n", val);
+					regmap_read(priv->madera->regmap,
+						    0x15D, &val);
+					dev_err(priv->madera->dev,
+						"0x15D: 0x%x\n", val);
+					regmap_read(priv->madera->regmap,
+						    0x15E, &val);
+					dev_err(priv->madera->dev,
+						"0x15E: 0x%x\n", val);
+					regmap_read(priv->madera->regmap,
+						    0x15F, &val);
+					dev_err(priv->madera->dev,
+						"0x15F: 0x%x\n", val);
+					regmap_read(priv->madera->regmap,
+						    0x160, &val);
+					dev_err(priv->madera->dev,
+						"0x160: 0x%x\n", val);
+					madera_reboot_codec(priv->madera);
+					bad_irq_count = 0;
+				}
+			} else {
+				bad_irq_count = 0;
+			}
+		}
 
 		handle_nested_irq(irq_find_mapping(priv->domain, 0));
 

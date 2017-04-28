@@ -308,6 +308,10 @@ int madera_cache_and_clear_sources(struct madera_priv *priv,
 			break;
 		}
 
+		/* Don't bother to set to zero if it already is */
+		if (!cache[i])
+			continue;
+
 		ret = regmap_write(madera->regmap, sources[i], 0);
 
 		if (ret) {
@@ -360,6 +364,10 @@ int madera_restore_sources(struct madera_priv *priv,
 		dev_dbg(madera->dev,
 			"%s addr: 0x%04x value: 0x%04x\n",
 			__func__, sources[i], cache[i]);
+
+		/* All mixers will be at zero no need to write to zero again */
+		if (!cache[i])
+			continue;
 
 		ret = regmap_write(madera->regmap, sources[i], cache[i]);
 
@@ -1486,6 +1494,20 @@ int madera_init_drc(struct snd_soc_codec *codec)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(madera_init_drc);
+
+int madera_init_aif(struct snd_soc_codec *codec)
+{
+	struct madera_priv *priv = snd_soc_codec_get_drvdata(codec);
+	struct madera *madera = priv->madera;
+	int ret;
+
+	/* Update Sample Rate 1 to 48kHz for cases when no AIF1 hw_params */
+	ret = regmap_update_bits(madera->regmap, MADERA_SAMPLE_RATE_1,
+				 MADERA_SAMPLE_RATE_1_MASK, 0x03);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(madera_init_aif);
 
 int madera_init_bus_error_irq(struct snd_soc_codec *codec, int dsp_num,
 			      irq_handler_t handler)
@@ -2829,7 +2851,13 @@ int madera_out_ev(struct snd_soc_dapm_widget *w,
 		case MADERA_OUT3R_ENA_SHIFT:
 			priv->out_up_pending--;
 			if (!priv->out_up_pending) {
-				msleep(priv->out_up_delay);
+				if (priv->out_up_delay < 20) {
+					int delay = priv->out_up_delay * 1000;
+
+					usleep_range(delay, delay + 1000);
+				} else {
+					msleep(priv->out_up_delay);
+				}
 				priv->out_up_delay = 0;
 			}
 			break;
@@ -3209,7 +3237,7 @@ int madera_set_sysclk(struct snd_soc_codec *codec, int clk_id,
 	if (clk_freq_sel < 0) {
 		dev_err(madera->dev,
 			"Failed to get clk setting for %dHZ\n", freq);
-		return ret;
+		return clk_freq_sel;
 	}
 
 	*clk = freq;
@@ -3432,6 +3460,15 @@ static int madera_startup(struct snd_pcm_substream *substream,
 	struct madera_dai_priv *dai_priv = &priv->dai[dai->id - 1];
 	struct madera *madera = priv->madera;
 	unsigned int base_rate;
+
+	switch (priv->madera->type) {
+	case WM1840:
+	case CS47L91:
+	case CS47L93:
+		return 0;
+	default:
+		break;
+	}
 
 	if (!substream->runtime)
 		return 0;
@@ -3805,7 +3842,7 @@ static int madera_dai_set_sysclk(struct snd_soc_dai *dai,
 		return -EBUSY;
 	}
 
-	dev_dbg(codec->dev, "Setting AIF%d to %s\n", dai->id + 1,
+	dev_dbg(codec->dev, "Setting AIF%d to %s\n", dai->id,
 		madera_dai_clk_str(clk_id));
 
 	memset(&routes, 0, sizeof(routes));
@@ -3998,6 +4035,15 @@ static int madera_validate_fll(struct madera_fll *fll,
 				unsigned int Fref,
 				unsigned int Fout)
 {
+	switch (fll->madera->type) {
+	case WM1840:
+	case CS47L91:
+	case CS47L93:
+		return 0;
+	default:
+		break;
+	}
+
 	if (fll->fout && Fout != fll->fout) {
 		madera_fll_err(fll, "Can't change output on active FLL\n");
 		return -EINVAL;
@@ -4349,12 +4395,23 @@ static int madera_wait_for_fll(struct madera_fll *fll, bool requested)
 
 	madera_fll_dbg(fll, "Waiting for FLL...\n");
 
-	for (i = 0; i < 25; i++) {
+	for (i = 0; i < 30; i++) {
 		regmap_read(madera->regmap, MADERA_IRQ1_RAW_STATUS_2, &val);
 		status = val & (MADERA_FLL1_LOCK_STS1 << (fll->id - 1));
 		if (status == requested)
 			return 0;
-		msleep(10);
+
+		switch (i) {
+		case 0 ... 5:
+			usleep_range(75, 125);
+			break;
+		case 11 ... 20:
+			usleep_range(750, 1250);
+			break;
+		default:
+			msleep(20);
+			break;
+		}
 	}
 
 	madera_fll_warn(fll, "Timed out waiting for lock\n");
@@ -4984,10 +5041,10 @@ static int madera_fllhj_apply(struct madera_fll *fll, int fin)
 		return -EINVAL;
 	}
 
-	regmap_update_bits(madera->regmap,
-			   fll->base + MADERA_FLL_CONTROL_2_OFFS,
-			   MADERA_FLL1_N_MASK,
-			   fll_n << MADERA_FLL1_N_SHIFT);
+	/* clear the ctrl_upd bit to guarantee we write to it later. */
+	regmap_write(madera->regmap,
+		     fll->base + MADERA_FLL_CONTROL_2_OFFS,
+		     fll_n << MADERA_FLL1_N_SHIFT);
 	regmap_update_bits(madera->regmap,
 			   fll->base + MADERA_FLL_CONTROL_3_OFFS,
 			   MADERA_FLL1_THETA_MASK,
@@ -5065,12 +5122,6 @@ static int madera_fllhj_enable(struct madera_fll *fll)
 			   MADERA_FLL1_ENA_MASK);
 
 out:
-	/* Release the hold so that flln locks to external frequency */
-	regmap_update_bits(madera->regmap,
-			   fll->base + MADERA_FLL_CONTROL_1_OFFS,
-			   MADERA_FLL1_HOLD_MASK,
-			   0);
-
 	regmap_update_bits(madera->regmap,
 			   fll->base + MADERA_FLL_CONTROL_11_OFFS,
 			   MADERA_FLL1_LOCKDET_MASK,
@@ -5080,6 +5131,12 @@ out:
 			   fll->base + MADERA_FLL_CONTROL_2_OFFS,
 			   MADERA_FLL1_CTRL_UPD_MASK,
 			   MADERA_FLL1_CTRL_UPD_MASK);
+
+	/* Release the hold so that flln locks to external frequency */
+	regmap_update_bits(madera->regmap,
+			   fll->base + MADERA_FLL_CONTROL_1_OFFS,
+			   MADERA_FLL1_HOLD_MASK,
+			   0);
 
 	if (!already_enabled)
 		madera_wait_for_fll(fll, true);
@@ -5091,6 +5148,13 @@ static int madera_fllhj_validate(struct madera_fll *fll,
 				 unsigned int ref_in,
 				 unsigned int fout)
 {
+	switch (fll->madera->type) {
+	case CS47L93:
+		return 0;
+	default:
+		break;
+	}
+
 	if (fout && !ref_in) {
 		madera_fll_err(fll, "fllout set without valid input clk\n");
 		return -EINVAL;
@@ -5203,6 +5267,18 @@ madera_get_extcon_info(struct snd_soc_codec *codec)
 	return madera->extcon_info;
 }
 EXPORT_SYMBOL_GPL(madera_get_extcon_info);
+
+bool madera_get_moisture_state(struct snd_soc_codec *codec)
+{
+	struct madera *madera = dev_get_drvdata(codec->dev->parent);
+	bool ret = madera->moisture_detected;
+
+	if (ret)
+		madera->moisture_detected = false;
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(madera_get_moisture_state);
 
 static int madera_set_force_bypass(struct snd_soc_codec *codec, bool set_bypass)
 {
@@ -5378,6 +5454,14 @@ int madera_unregister_notifier(struct snd_soc_codec *codec,
 	return blocking_notifier_chain_unregister(&madera->notifier, nb);
 }
 EXPORT_SYMBOL_GPL(madera_unregister_notifier);
+
+struct regmap *madera_get_regmap_dsp(struct snd_soc_codec *codec)
+{
+	struct madera *madera = dev_get_drvdata(codec->dev->parent);
+
+	return madera->regmap_32bit;
+}
+EXPORT_SYMBOL_GPL(madera_get_regmap_dsp);
 
 MODULE_DESCRIPTION("ASoC Cirrus Logic Madera codec support");
 MODULE_AUTHOR("Charles Keepax <ckeepax@opensource.wolfsonmicro.com>");

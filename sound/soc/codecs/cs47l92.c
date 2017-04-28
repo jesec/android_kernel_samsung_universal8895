@@ -295,6 +295,8 @@ static int cs47l92_adsp_power_ev(struct snd_soc_dapm_widget *w,
 	unsigned int freq;
 	int ret;
 
+	dev_err(madera->dev, "Bad cs47l92_adsp_power_ev\n");
+
 	ret = regmap_read(madera->regmap, MADERA_DSP_CLOCK_2, &freq);
 	if (ret != 0) {
 		dev_err(madera->dev,
@@ -1826,11 +1828,57 @@ static struct snd_soc_dai_driver cs47l92_dai[] = {
 	},
 };
 
+static irqreturn_t madera_irq_boot_done(int irq, void *data)
+{
+	struct madera *madera = data;
+
+	dev_dbg(madera->dev, "Boot done\n");
+
+	return IRQ_HANDLED;
+}
+
 static irqreturn_t cs47l92_dsp_bus_error(int irq, void *data)
 {
 	struct wm_adsp *adsp = (struct wm_adsp *)data;
+	struct snd_soc_codec *codec = adsp->codec;
+	struct cs47l92 *cs47l92 = snd_soc_codec_get_drvdata(codec);
+	struct madera *madera = cs47l92->core.madera;
+	int ret, i;
+	unsigned int val;
 
-	return wm_adsp2_bus_error(adsp);
+	val = snd_soc_read(adsp->codec, MADERA_SOFTWARE_RESET);
+	dev_err(adsp->dev, "0x%x: 0x%x\n", MADERA_SOFTWARE_RESET, val);
+	val = snd_soc_read(adsp->codec, MADERA_HARDWARE_REVISION);
+	dev_err(adsp->dev, "0x%x: 0x%x\n", MADERA_HARDWARE_REVISION, val);
+	val = snd_soc_read(adsp->codec, 0x158);
+	dev_err(adsp->dev, "0x158: 0x%x\n", val);
+	val = snd_soc_read(adsp->codec, 0x159);
+	dev_err(adsp->dev, "0x159: 0x%x\n", val);
+	val = snd_soc_read(adsp->codec, 0x15D);
+	dev_err(adsp->dev, "0x15D: 0x%x\n", val);
+	val = snd_soc_read(adsp->codec, 0x15E);
+	dev_err(adsp->dev, "0x15E: 0x%x\n", val);
+	val = snd_soc_read(adsp->codec, 0x15F);
+	dev_err(adsp->dev, "0x15F: 0x%x\n", val);
+	val = snd_soc_read(adsp->codec, 0x160);
+	dev_err(adsp->dev, "0x160: 0x%x\n", val);
+	regcache_cache_bypass(madera->regmap, true);
+	for (i = 0; i < 40; i++) {
+		val = snd_soc_read(adsp->codec, MADERA_IRQ1_MASK_1 + i);
+		dev_err(adsp->dev, "0x%x: 0x%x\n", MADERA_IRQ1_MASK_1 + i, val);
+	}
+	regcache_cache_bypass(madera->regmap, false);
+	for (i = 0; i < 40; i++) {
+		val = snd_soc_read(adsp->codec, MADERA_IRQ1_STATUS_1 + i);
+		dev_err(adsp->dev, "0x%x: 0x%x\n",
+			MADERA_IRQ1_STATUS_1 + i, val);
+	}
+
+	ret = wm_adsp2_bus_error(adsp);
+
+	madera_reboot_codec(madera);
+
+	return ret;
 }
 
 static const char * const cs47l92_dmic_refs[] = {
@@ -1857,7 +1905,7 @@ static int cs47l92_codec_probe(struct snd_soc_codec *codec)
 	struct madera *madera = cs47l92->core.madera;
 	struct madera_codec_pdata *pdata = &madera->pdata.codec;
 	int ret;
-	unsigned int val;
+	unsigned int val = 0;
 
 	cs47l92->core.madera->dapm = snd_soc_codec_get_dapm(codec);
 
@@ -1885,6 +1933,10 @@ static int cs47l92_codec_probe(struct snd_soc_codec *codec)
 	if (ret)
 		return ret;
 
+	ret = madera_init_aif(codec);
+	if (ret)
+		return ret;
+
 	snd_soc_dapm_disable_pin(madera->dapm, "HAPTICS");
 
 	ret = snd_soc_add_codec_controls(codec, madera_adsp_rate_controls,
@@ -1895,6 +1947,16 @@ static int cs47l92_codec_probe(struct snd_soc_codec *codec)
 	ret = wm_adsp2_codec_probe(&cs47l92->core.adsp[0], codec);
 	if (ret)
 		return ret;
+
+	ret = madera_request_irq(madera, MADERA_IRQ_BOOT_DONE,
+				 "Boot Done IRQ", madera_irq_boot_done,
+				 madera);
+	if (ret != 0) {
+		dev_err(codec->dev, "Failed to request Boot Done IRQ: %d\n",
+			ret);
+
+		return ret;
+	}
 
 	ret = madera_init_bus_error_irq(codec, 0, cs47l92_dsp_bus_error);
 	if (ret) {

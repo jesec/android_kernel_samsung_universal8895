@@ -110,6 +110,7 @@ int xhci_halt(struct xhci_hcd *xhci)
 	xhci_dbg_trace(xhci, trace_xhci_dbg_init, "// Halt the HC");
 	xhci_quiesce(xhci);
 
+	pr_info("%s ++ \n", __func__);
 	ret = xhci_handshake(&xhci->op_regs->status,
 			STS_HALT, STS_HALT, XHCI_MAX_HALT_USEC);
 	if (!ret) {
@@ -680,6 +681,10 @@ void xhci_stop(struct usb_hcd *hcd)
 	u32 temp;
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 
+#if defined(CONFIG_USB_HOST_SAMSUNG_FEATURE)
+	if (!usb_hcd_is_primary_hcd(hcd))
+		return;
+#endif
 	mutex_lock(&xhci->mutex);
 
 	if (!(xhci->xhc_state & XHCI_STATE_HALTED)) {
@@ -3919,8 +3924,12 @@ static int xhci_setup_device(struct usb_hcd *hcd, struct usb_device *udev,
 		ret = -EINVAL;
 		break;
 	}
-	if (ret)
+	if (ret){
+#if defined(CONFIG_USB_HOST_SAMSUNG_FEATURE)
+		if(ret != -ETIME)
+#endif
 		goto out;
+	}
 	temp_64 = xhci_read_64(xhci, &xhci->op_regs->dcbaa_ptr);
 	xhci_dbg_trace(xhci, trace_xhci_dbg_address,
 			"Op regs DCBAA ptr = %#016llx", temp_64);
@@ -4142,6 +4151,11 @@ int xhci_set_usb2_hardware_lpm(struct usb_hcd *hcd,
 		return -EPERM;
 
 	if (udev->usb2_hw_lpm_capable != 1)
+		return -EPERM;
+	/* some USB3.0 memory stick doesn't support L1 mode,
+	 * so we add XHCI_LPM_L1_DISABLE quirks for disabling L1 mode
+	 * */
+	if (!(xhci->quirks & XHCI_LPM_L1_SUPPORT))
 		return -EPERM;
 
 	spin_lock_irqsave(&xhci->lock, flags);

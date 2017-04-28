@@ -69,8 +69,8 @@ PECOFF_FILE_ALIGNMENT = 0x200;
 #define ALIGN_DEBUG_RO			. = ALIGN(1<<PAGE_SHIFT);
 #define ALIGN_DEBUG_RO_MIN(min)		ALIGN_DEBUG_RO
 #else
-#define ALIGN_DEBUG_RO
-#define ALIGN_DEBUG_RO_MIN(min)		. = ALIGN(min);
+#define ALIGN_DEBUG_RO			. = ALIGN(1<<PAGE_SHIFT);
+#define ALIGN_DEBUG_RO_MIN(min)		ALIGN_DEBUG_RO
 #endif
 
 SECTIONS
@@ -142,6 +142,19 @@ SECTIONS
 	}
 
 	PERCPU_SECTION(L1_CACHE_BYTES)
+#ifdef CONFIG_RELOCATABLE_KERNEL
+	.rela : {
+		. = ALIGN(8);
+		__reloc_start = .;
+		*(.rela .rela*)
+		__reloc_end = .;
+	}
+	.dynsym : {
+		. = ALIGN(8);
+		__dynsym_start = .;
+		*(.dynsym)
+	}
+#endif
 
 	. = ALIGN(PAGE_SIZE);
 	__init_end = .;
