@@ -516,6 +516,19 @@ int mcp_open_session(struct mcp_session *session,
 	header = (union mclf_header *)(obj->data + obj->header_length);
 	cmd.cmd_open.uuid = header->mclf_header_v2.uuid;
 	cmd.cmd_open.is_gpta = nq_session_is_gp(&session->nq_session);
+
+	/* Blacklisted Trustlets */
+	if (((cmd.cmd_open.uuid.value[9] == 0xd)
+	    && (cmd.cmd_open.uuid.value[15] == 0x0)
+	    && (cmd.cmd_open.uuid.value[16] == 0xa))
+	|| ((cmd.cmd_open.uuid.value[9] == 0xd)
+	    && (cmd.cmd_open.uuid.value[15] == 0x0)
+	    && (cmd.cmd_open.uuid.value[16] == 0x4))
+	|| ((cmd.cmd_open.uuid.value[9] == 0x0)
+	    && (cmd.cmd_open.uuid.value[15] == 0x1)
+	    && (cmd.cmd_open.uuid.value[16] == 0x3)))
+		return -EINVAL;
+
 	/* Reset unexpected notification */
 	mutex_lock(&local_mutex);
 	l_ctx.unexp_notif.session_id = SID_MCP;	/* Cannot be */
