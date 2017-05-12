@@ -1593,6 +1593,10 @@ static int cs47l35_codec_probe(struct snd_soc_codec *codec)
 	if (ret)
 		return ret;
 
+	ret = madera_init_aif(codec);
+	if (ret)
+		return ret;
+
 	snd_soc_dapm_disable_pin(madera->dapm, "HAPTICS");
 
 	ret = snd_soc_add_codec_controls(codec, madera_adsp_rate_controls,

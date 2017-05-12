@@ -148,6 +148,22 @@ struct madera_accdet_pdata {
 	 */
 	unsigned int hpd_pins[4];
 
+	/** Moisture detection pin */
+	int moisture_pin;
+	/** Moisture detection impedance threshold */
+	int moisture_imp;
+	/** Number of debounces to perform on moisture detection */
+	int moisture_debounce;
+
+	/** Delay between jack detection and any futher action */
+	int init_delay;
+
+	/**
+	 * Specify an input to mute during headset button presses:
+	 * 1 - IN1L, 2 - IN1R, ..., n - IN[n]R
+	 */
+	u32 hs_mic;
+
 	/** Override the normal jack detection */
 	const struct madera_jd_state *custom_jd;
 };

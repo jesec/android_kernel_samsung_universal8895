@@ -678,6 +678,8 @@ struct sk_buff {
 #endif
 	};
 
+	__u32			priomark;
+
 	union {
 		__u32		mark;
 		__u32		reserved_tailroom;

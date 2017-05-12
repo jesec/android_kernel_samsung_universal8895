@@ -317,6 +317,20 @@ struct tcp_sock {
 		u32	time;
 	} rcv_rtt_est;
 
+/* CLTCP */
+#ifdef CONFIG_CLTCP
+	u8 cltcp_netif;
+	u32 cltcp_rtt_min;
+	u32 cltcp_srtt;
+	u32 cltcp_rttvar;
+	int cltcp_cwnd_est;
+	int cltcp_tcp_rmem_max;
+	int cltcp_tcp_rmem_max_base;
+	int cltcp_rwnd_max_adjust; /* the number of rwnd cut after last rwnd grown */
+	int cltcp_max_tput;
+	int cltcp_rmem_max_curbdp[2];
+#endif
+
 /* Receiver queue space */
 	struct {
 		int	space;

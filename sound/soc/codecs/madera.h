@@ -516,6 +516,7 @@ extern int madera_init_inputs(struct snd_soc_codec *codec,
 			      const char * const *dmic_refs,
 			      int n_dmic_refs);
 extern int madera_init_outputs(struct snd_soc_codec *codec, int n_mono_routes);
+extern int madera_init_aif(struct snd_soc_codec *codec);
 extern int madera_init_bus_error_irq(struct snd_soc_codec *codec, int dsp_num,
 				     irq_handler_t handler);
 extern void madera_destroy_bus_error_irq(struct snd_soc_codec *codec,
@@ -531,6 +532,9 @@ extern int madera_set_custom_jd(struct snd_soc_codec *codec,
 				const struct madera_jd_state *custom_jd,
 				unsigned int index);
 
+extern struct regmap *madera_get_regmap_dsp(struct snd_soc_codec *codec);
+
+extern bool madera_get_moisture_state(struct snd_soc_codec *codec);
 extern int madera_enable_force_bypass(struct snd_soc_codec *codec);
 extern int madera_disable_force_bypass(struct snd_soc_codec *codec);
 

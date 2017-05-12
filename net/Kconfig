@@ -394,3 +394,9 @@ endif   # if NET
 # Used by archs to tell that they support BPF_JIT
 config HAVE_BPF_JIT
 	bool
+
+# Cross Layer TCP
+config CLTCP
+	bool "Cross Layer TCP"
+	---help---
+	This feature implements Cross Layer TCP (CLTCP)

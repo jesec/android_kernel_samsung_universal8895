@@ -75,6 +75,9 @@
 #include <linux/ipsec.h>
 #include <asm/unaligned.h>
 #include <linux/errqueue.h>
+#ifdef CONFIG_CLTCP
+#include <linux/inetdevice.h>
+#endif
 
 int sysctl_tcp_timestamps __read_mostly = 1;
 int sysctl_tcp_window_scaling __read_mostly = 1;
@@ -104,6 +107,11 @@ int sysctl_tcp_early_retrans __read_mostly = 3;
 int sysctl_tcp_invalid_ratelimit __read_mostly = HZ/2;
 int sysctl_tcp_default_init_rwnd __read_mostly = TCP_INIT_CWND * 2;
 
+#ifdef CONFIG_CLTCP
+int sysctl_tcp_cltcp[4] __read_mostly;	/* Time stamp, Avg Time, Avg TP, Avg MCS, Avg NRB, DL grant freq., RSRP, RSRQ, RSSI, CINR */
+unsigned long long sysctl_tcp_cltcp_ifdevs __read_mostly;
+#endif
+
 #define FLAG_DATA		0x01 /* Incoming frame contained data.		*/
 #define FLAG_WIN_UPDATE		0x02 /* Incoming ACK was a window update.	*/
 #define FLAG_DATA_ACKED		0x04 /* This ACK acknowledged new data.		*/
@@ -126,6 +134,101 @@ int sysctl_tcp_default_init_rwnd __read_mostly = TCP_INIT_CWND * 2;
 
 #define TCP_REMNANT (TCP_FLAG_FIN|TCP_FLAG_URG|TCP_FLAG_SYN|TCP_FLAG_PSH)
 #define TCP_HP_BITS (~(TCP_RESERVED_BITS|TCP_FLAG_PSH))
+
+#ifdef CONFIG_CLTCP
+static int cltcp_int_ln (u32);
+static int cltcp_pow (int, int);
+static int cltcp_piecelinear_logbdp (struct tcp_sock *);
+
+#define CLTCP_DEF_ENABLE 1
+#define CLTCP_DEF_UB  7340032
+#define CLTCP_DEF_LB 4194304
+#define CLTCP_DEF_SRTT_SCALE 10 // it should be equal or larger than 1
+#define CLTCP_DEF_PA 600000
+#define CLTCP_DEF_PB 17
+#define CLTCP_DEF_INC 1
+#define CLTCP_DEF_INC_TH 1
+#define CLTCP_DEF_DEC 1
+#define CLTCP_DEF_DEC_TH 3
+#define CLTCP_RTT_MIN_INITIAL_VAL 86400000
+#define CLT(n) n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n
+
+static const s8 CltcpLogTable[256] = 
+{
+    -1, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
+    CLT(4), CLT(5), CLT(5), CLT(6), CLT(6), CLT(6), CLT(6),
+    CLT(7), CLT(7), CLT(7), CLT(7), CLT(7), CLT(7), CLT(7), CLT(7)
+};
+
+#ifdef SAMSUNG_CLTCP_DEBUG
+#define cltcp_debug(format, ...) pr_debug("<cltcp> "format, __VA_ARGS__)
+#else
+#define cltcp_debug(format, ...) do {} while (0)
+#endif
+
+static inline bool cltcp(struct tcp_sock *tp)
+{
+	return CLTCP_DEF_ENABLE && (sysctl_tcp_cltcp[1] == 0x04) &&
+		(sysctl_tcp_cltcp[2] == 0x01) && (tp->cltcp_netif == 1);
+}
+
+static inline int cltcp_rmem_max(struct tcp_sock *tp)
+{
+	if (cltcp(tp))
+		return tp->cltcp_tcp_rmem_max;
+
+	return sysctl_tcp_rmem[2];
+}
+
+static void cltcp_init_buffer_space(struct sock *sk)
+{
+	struct inet_sock *inet = inet_sk(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
+	struct net_device *dev_out = __ip_dev_find(sock_net(sk), 
+			inet->inet_saddr, false);
+	int ifindex;
+	
+	if (!CLTCP_DEF_ENABLE || !dev_out)
+		return;
+
+	ifindex = dev_out->ifindex;
+
+	if (ifindex < 0 || ifindex >= 64) {
+		tp->cltcp_netif = 0;
+		return;
+	}
+
+	if (sysctl_tcp_cltcp_ifdevs & (1 << ifindex)) {
+		tp->cltcp_netif = 1;
+
+		/* Initialization for CLTCP */
+		tp->cltcp_rtt_min = CLTCP_RTT_MIN_INITIAL_VAL;
+		tp->cltcp_max_tput = 0;
+		tp->cltcp_srtt = 0;
+		tp->cltcp_rttvar = 0;
+		tp->cltcp_cwnd_est = 0;
+		tp->cltcp_tcp_rmem_max_base = sysctl_tcp_rmem[2];
+		tp->cltcp_tcp_rmem_max = sysctl_tcp_rmem[2];
+		tp->cltcp_rwnd_max_adjust = 0;
+
+		tp->cltcp_rmem_max_curbdp[0] = -1;
+		tp->cltcp_rmem_max_curbdp[1] = -1;
+	} else {
+		tp->cltcp_netif = 0;
+	}
+}
+
+static inline u32 cltcp_rtt_avg(struct tcp_sock *tp)
+{
+	return tp->cltcp_srtt >> CLTCP_DEF_SRTT_SCALE;
+}
+
+static inline u32 cltcp_rttvar_avg(struct tcp_sock *tp)
+{
+	return tp->cltcp_rttvar >> (CLTCP_DEF_SRTT_SCALE - 1);
+}
+
+#endif
 
 /* Adapt the MSS value used to make delayed ack decision to the
  * real world.
@@ -345,7 +448,11 @@ static int __tcp_grow_window(const struct sock *sk, const struct sk_buff *skb)
 	struct tcp_sock *tp = tcp_sk(sk);
 	/* Optimize this! */
 	int truesize = tcp_win_from_space(skb->truesize) >> 1;
+#ifdef CONFIG_CLTCP
+	int window = tcp_win_from_space(cltcp_rmem_max(tp)) >> 1;
+#else
 	int window = tcp_win_from_space(sysctl_tcp_rmem[2]) >> 1;
+#endif
 
 	while (tp->rcv_ssthresh <= window) {
 		if (truesize <= skb->len)
@@ -400,7 +507,11 @@ static void tcp_fixup_rcvbuf(struct sock *sk)
 		rcvmem <<= 2;
 
 	if (sk->sk_rcvbuf < rcvmem)
+#ifdef CONFIG_CLTCP
+		sk->sk_rcvbuf = min(rcvmem, cltcp_rmem_max(tcp_sk(sk)));
+#else
 		sk->sk_rcvbuf = min(rcvmem, sysctl_tcp_rmem[2]);
+#endif
 }
 
 /* 4. Try to fixup all. It is made immediately after connection enters
@@ -411,6 +522,9 @@ void tcp_init_buffer_space(struct sock *sk)
 	struct tcp_sock *tp = tcp_sk(sk);
 	int maxwin;
 
+#ifdef CONFIG_CLTCP
+	cltcp_init_buffer_space(sk);
+#endif
 	if (!(sk->sk_userlocks & SOCK_RCVBUF_LOCK))
 		tcp_fixup_rcvbuf(sk);
 	if (!(sk->sk_userlocks & SOCK_SNDBUF_LOCK))
@@ -448,7 +562,15 @@ static void tcp_clamp_window(struct sock *sk)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 
 	icsk->icsk_ack.quick = 0;
-
+#ifdef CONFIG_CLTCP
+	if (sk->sk_rcvbuf < cltcp_rmem_max(tp) &&
+	    !(sk->sk_userlocks & SOCK_RCVBUF_LOCK) &&
+	    !tcp_under_memory_pressure(sk) &&
+	    sk_memory_allocated(sk) < sk_prot_mem_limits(sk, 0)) {
+		sk->sk_rcvbuf = min(atomic_read(&sk->sk_rmem_alloc),
+				    cltcp_rmem_max(tp));
+	}
+#else
 	if (sk->sk_rcvbuf < sysctl_tcp_rmem[2] &&
 	    !(sk->sk_userlocks & SOCK_RCVBUF_LOCK) &&
 	    !tcp_under_memory_pressure(sk) &&
@@ -456,6 +578,7 @@ static void tcp_clamp_window(struct sock *sk)
 		sk->sk_rcvbuf = min(atomic_read(&sk->sk_rmem_alloc),
 				    sysctl_tcp_rmem[2]);
 	}
+#endif
 	if (atomic_read(&sk->sk_rmem_alloc) > sk->sk_rcvbuf)
 		tp->rcv_ssthresh = min(tp->window_clamp, 2U * tp->advmss);
 }
@@ -479,6 +602,40 @@ void tcp_initialize_rcv_mss(struct sock *sk)
 	inet_csk(sk)->icsk_ack.rcv_mss = hint;
 }
 EXPORT_SYMBOL(tcp_initialize_rcv_mss);
+
+#ifdef CONFIG_CLTCP
+static void cltcp_net_status_estimator(struct tcp_sock *tp)
+{
+	u32 cltcp_rttdiff = 0;
+			
+	if (tp->cltcp_rtt_min > tp->rcv_rtt_est.rtt)
+		tp->cltcp_rtt_min = tp->rcv_rtt_est.rtt;
+
+	if (tp->cltcp_srtt != 0) {
+		tp->cltcp_srtt -= cltcp_rtt_avg(tp);
+		tp->cltcp_srtt += tp->rcv_rtt_est.rtt;
+		
+		if (tp->rcv_rtt_est.rtt >= cltcp_rtt_avg(tp))
+			cltcp_rttdiff = tp->rcv_rtt_est.rtt - cltcp_rtt_avg(tp);
+		else
+			cltcp_rttdiff = cltcp_rtt_avg(tp) - tp->rcv_rtt_est.rtt;
+	} else {
+		tp->cltcp_srtt = tp->rcv_rtt_est.rtt << CLTCP_DEF_SRTT_SCALE;
+	}
+
+	if (tp->cltcp_rttvar != 0) {
+		tp->cltcp_rttvar -= cltcp_rttvar_avg(tp);
+		tp->cltcp_rttvar += cltcp_rttdiff;
+	} else {
+		tp->cltcp_rttvar = (tp->rcv_rtt_est.rtt << (CLTCP_DEF_SRTT_SCALE - 1)) / 2;
+	}
+
+	cltcp_debug("%s tp->rcv_rtt_est.rtt = %u\n", __func__, tp->rcv_rtt_est.rtt);
+	cltcp_debug("%s tp->rtt_min = %u\n", __func__, tp->cltcp_rtt_min);
+	cltcp_debug("%s tp->cltcp_srtt = %u\n", __func__, cltcp_rtt_avg(tp));
+	cltcp_debug("%s tp->cltcp_rttvar = %u\n", __func__, cltcp_rttvar_avg(tp));
+}
+#endif
 
 /* Receiver "autotuning" code.
  *
@@ -525,6 +682,11 @@ static void tcp_rcv_rtt_update(struct tcp_sock *tp, u32 sample, int win_dep)
 
 	if (tp->rcv_rtt_est.rtt != new_sample)
 		tp->rcv_rtt_est.rtt = new_sample;
+#ifdef CONFIG_CLTCP
+	if (cltcp(tp))
+		cltcp_net_status_estimator(tp);	
+#endif
+
 }
 
 static inline void tcp_rcv_rtt_measure(struct tcp_sock *tp)
@@ -550,6 +712,150 @@ static inline void tcp_rcv_rtt_measure_ts(struct sock *sk,
 		tcp_rcv_rtt_update(tp, tcp_time_stamp - tp->rx_opt.rcv_tsecr, 0);
 }
 
+#ifdef CONFIG_CLTCP
+static int cltcp_int_ln(u32 v) 
+{
+	u32 r, t, tt;
+
+	if ((tt = v >> 16))
+		r = ((t = tt >> 8) ? 24 + CltcpLogTable[t] : 16 + CltcpLogTable[tt]);
+	else 
+		r = ((t = v >> 8) ? 8 + CltcpLogTable[t] : CltcpLogTable[v]);
+
+	return r;
+}
+static int cltcp_pow(int base, int n)
+{
+	int result = 1, i;
+
+	for (i = 0; i < n; i++)
+		result *= base;
+
+	return result;
+}
+
+/*
+ * RWNDmax = a * log(TPaccess,max * RTTmin - b)
+ */
+#define CLTCP_RWND_CAL(rtt)	\
+		CLTCP_DEF_PA * \
+		(cltcp_int_ln(tp->cltcp_max_tput * rtt * 125) \
+		 - CLTCP_DEF_PB)
+
+static int cltcp_piecelinear_logbdp(struct tcp_sock *tp)
+{
+	int intlog_lower, intlog_upper, s, i, delta;
+	u32 rtt_low, rtt_high;
+	
+	s = i = 0;
+	while (s < tp->cltcp_rtt_min) {
+		i++;
+		s = 7 * cltcp_pow(2, i);
+	}
+
+	rtt_high = s;
+	rtt_low = 7 * cltcp_pow(2 , i - 1);
+
+	tp->cltcp_max_tput = sysctl_tcp_cltcp[3];
+
+	intlog_lower = CLTCP_RWND_CAL(rtt_low);
+	intlog_upper = CLTCP_RWND_CAL(rtt_high);
+
+	if (intlog_lower < 0)
+		return 0;
+
+	delta = (tp->cltcp_rtt_min - rtt_low) * (intlog_upper - intlog_lower)
+		/ (rtt_high - rtt_low);
+
+	return intlog_lower+delta;
+}
+
+static inline void cltcp_increase_rwnd_max(struct tcp_sock *tp)
+{
+	tp->cltcp_tcp_rmem_max = tp->cltcp_tcp_rmem_max * 11 / 10;
+}
+
+static inline void cltcp_decrease_rwnd_max(struct tcp_sock *tp)
+{
+	tp->cltcp_tcp_rmem_max = tp->cltcp_tcp_rmem_max * 8 / 10;
+}
+
+static void cltcp_rwnd_max_adjustment(struct tcp_sock *tp)
+{
+	if (tp->cltcp_srtt && tp->cltcp_rtt_min != CLTCP_RTT_MIN_INITIAL_VAL) {
+		/*
+		 * initial RWND max estimation
+		 */
+		tp->cltcp_rmem_max_curbdp[1] = tp->cltcp_rmem_max_curbdp[0];
+		tp->cltcp_rmem_max_curbdp[0] = cltcp_piecelinear_logbdp(tp);
+
+		if (tp->cltcp_rmem_max_curbdp[0] != tp->cltcp_rmem_max_curbdp[1])
+			tp->cltcp_rwnd_max_adjust = 0;
+
+		cltcp_debug("%s saddr/sport = %08X/%d\n", __func__, 
+			ntohl(tp->inet_conn.icsk_inet.inet_saddr),
+			ntohs(tp->inet_conn.icsk_inet.inet_sport));
+		cltcp_debug("%s daddr/dport = %08X/%d\n", __func__, 
+			ntohl(tp->inet_conn.icsk_inet.inet_daddr),
+			ntohs(tp->inet_conn.icsk_inet.inet_dport));
+		cltcp_debug("%s cltcp_max_tput = %d, cltcp_rtt_min = %d, cltcp_srtt = %d, cltcp_rttvar = %u\n", 
+			__func__, tp->cltcp_max_tput, tp->cltcp_rtt_min, cltcp_rtt_avg(tp), cltcp_rttvar_avg(tp)); 
+
+		tp->cltcp_tcp_rmem_max_base = tcp_space_from_win(tp->cltcp_rmem_max_curbdp[0]);
+
+		cltcp_debug("%s calculated cltcp_tcp_rmem_max_base = %d\n", 
+			__func__, tp->cltcp_tcp_rmem_max_base); 
+
+		if (tp->cltcp_tcp_rmem_max_base > CLTCP_DEF_UB)
+			tp->cltcp_tcp_rmem_max_base = CLTCP_DEF_UB;
+		else if (tp->cltcp_tcp_rmem_max_base < CLTCP_DEF_LB)
+			tp->cltcp_tcp_rmem_max_base = CLTCP_DEF_LB;
+
+		if (tp->cltcp_rwnd_max_adjust == 0) 
+			tp->cltcp_tcp_rmem_max = tp->cltcp_tcp_rmem_max_base;
+	}
+
+	/*
+	 * Dynamic RWND increase 
+	 */
+	if (CLTCP_DEF_INC && tp->cltcp_rtt_min != CLTCP_RTT_MIN_INITIAL_VAL && 
+		tp->cltcp_cwnd_est > tcp_win_from_space(tp->cltcp_tcp_rmem_max) - 100 * tp->advmss &&
+		cltcp_rtt_avg(tp) - tp->cltcp_rtt_min < CLTCP_DEF_INC_TH * cltcp_rttvar_avg(tp)) {
+		
+		/* increasing size calculation */		
+		cltcp_increase_rwnd_max(tp);
+
+		if (tp->cltcp_tcp_rmem_max > CLTCP_DEF_UB)
+			tp->cltcp_tcp_rmem_max = CLTCP_DEF_UB;
+
+		tp->cltcp_rwnd_max_adjust = 1;
+
+		cltcp_debug("%s cltcp_tcp_rmem_max increased = %d, cltcp_cwnd_est = %d\n", 
+			__func__, tp->cltcp_tcp_rmem_max, tp->cltcp_cwnd_est);
+	} else if (CLTCP_DEF_DEC &&
+		tp->cltcp_rwnd_max_adjust == 0 && 
+		tp->cltcp_rtt_min != CLTCP_RTT_MIN_INITIAL_VAL && 
+		cltcp_rtt_avg(tp) - tp->cltcp_rtt_min > CLTCP_DEF_DEC_TH * cltcp_rttvar_avg(tp)) {
+		
+		/* decreasing size calculation */
+		cltcp_decrease_rwnd_max(tp);
+
+		if (tp->cltcp_tcp_rmem_max < CLTCP_DEF_LB)
+			tp->cltcp_tcp_rmem_max = CLTCP_DEF_LB;
+
+		tp->cltcp_rwnd_max_adjust = 1;
+
+		cltcp_debug("%s cltcp_tcp_rmem_max decreased = %d\n",
+			__func__, tp->cltcp_tcp_rmem_max);
+	}
+
+	cltcp_debug("%s filtered cltcp_tcp_rmem_max_base = %d\n", __func__,
+			tp->cltcp_tcp_rmem_max_base);
+	cltcp_debug("%s cltcp_tcp_rmem_max = %d\n", __func__,
+			tp->cltcp_tcp_rmem_max);
+}
+#endif
+
 /*
  * This function should be called every time data is copied to user space.
  * It calculates the appropriate TCP receive buffer space.
@@ -566,6 +872,21 @@ void tcp_rcv_space_adjust(struct sock *sk)
 
 	/* Number of bytes copied to user in last RTT */
 	copied = tp->copied_seq - tp->rcvq_space.seq;
+#ifdef CONFIG_CLTCP
+	if (cltcp(tp)) {
+		if (tp->cltcp_cwnd_est == 0)
+			tp->cltcp_cwnd_est = copied;
+		else
+			tp->cltcp_cwnd_est = (7 * tp->cltcp_cwnd_est + copied) / 8;
+
+		cltcp_debug("%s cwnd_est = %d\n", __func__, 
+				tp->cltcp_cwnd_est);
+
+		if (copied <= tp->rcvq_space.space && 
+			tp->cltcp_max_tput == sysctl_tcp_cltcp[3])
+			goto new_measure;
+	} else 
+#endif
 	if (copied <= tp->rcvq_space.space)
 		goto new_measure;
 
@@ -605,13 +926,31 @@ void tcp_rcv_space_adjust(struct sock *sk)
 		while (tcp_win_from_space(rcvmem) < tp->advmss)
 			rcvmem += 128;
 
+#ifdef CONFIG_CLTCP
+		if (cltcp(tp)) {
+			cltcp_rwnd_max_adjustment(tp);
+			
+			rcvbuf = min(rcvwin / tp->advmss * rcvmem, cltcp_rmem_max(tp));
+		} else 
+#endif
 		rcvbuf = min(rcvwin / tp->advmss * rcvmem, sysctl_tcp_rmem[2]);
+		
+#ifdef CONFIG_CLTCP
+		cltcp_debug("%s final rcvbuf %d\n", __func__, rcvbuf);
+#endif
 		if (rcvbuf > sk->sk_rcvbuf) {
 			sk->sk_rcvbuf = rcvbuf;
 
 			/* Make the window clamp follow along.  */
 			tp->window_clamp = rcvwin;
 		}
+#ifdef CONFIG_CLTCP
+		else if (cltcp(tp) && cltcp_rmem_max(tp) < sk->sk_rcvbuf){
+			sk->sk_rcvbuf = cltcp_rmem_max(tp);
+
+			tp->window_clamp = sk->sk_rcvbuf/rcvmem*tp->advmss;
+		}
+#endif
 	}
 	tp->rcvq_space.space = copied;
 
