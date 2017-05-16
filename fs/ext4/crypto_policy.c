@@ -102,6 +102,9 @@ static int ext4_create_encryption_context_from_policy(
 int ext4_process_policy(const struct ext4_encryption_policy *policy,
 			struct inode *inode)
 {
+	if (!inode_owner_or_capable(inode))
+		return -EACCES;
+
 	if (policy->version != 0)
 		return -EINVAL;
 
@@ -153,6 +156,12 @@ int ext4_is_child_context_consistent_with_parent(struct inode *parent,
 		WARN_ON(1);	/* Should never happen */
 		return 0;
 	}
+
+	/* No restrictions on file types which are never encrypted */
+	if (!S_ISREG(child->i_mode) && !S_ISDIR(child->i_mode) &&
+	    !S_ISLNK(child->i_mode))
+		return 1;
+
 	/* no restrictions if the parent directory is not encrypted */
 	if (!ext4_encrypted_inode(parent))
 		return 1;

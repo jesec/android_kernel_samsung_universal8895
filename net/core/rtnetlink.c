@@ -1018,7 +1018,7 @@ static int rtnl_phys_port_name_fill(struct sk_buff *skb, struct net_device *dev)
 		return err;
 	}
 
-	if (nla_put(skb, IFLA_PHYS_PORT_NAME, strlen(name), name))
+	if (nla_put_string(skb, IFLA_PHYS_PORT_NAME, name))
 		return -EMSGSIZE;
 
 	return 0;
@@ -2600,7 +2600,10 @@ nla_put_failure:
 
 static inline size_t rtnl_fdb_nlmsg_size(void)
 {
-	return NLMSG_ALIGN(sizeof(struct ndmsg)) + nla_total_size(ETH_ALEN);
+	return NLMSG_ALIGN(sizeof(struct ndmsg)) +
+	       nla_total_size(ETH_ALEN) +	/* NDA_LLADDR */
+	       nla_total_size(sizeof(u16)) +	/* NDA_VLAN */
+	       0;
 }
 
 static void rtnl_fdb_notify(struct net_device *dev, u8 *addr, u16 vid, int type)

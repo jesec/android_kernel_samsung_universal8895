@@ -98,13 +98,13 @@ cifs_mark_open_files_invalid(struct cifs_tcon *tcon)
 	struct list_head *tmp1;
 
 	/* list all files open on tree connection and mark them invalid */
-	spin_lock(&cifs_file_list_lock);
+	spin_lock(&tcon->open_file_lock);
 	list_for_each_safe(tmp, tmp1, &tcon->openFileList) {
 		open_file = list_entry(tmp, struct cifsFileInfo, tlist);
 		open_file->invalidHandle = true;
 		open_file->oplock_break_cancelled = true;
 	}
-	spin_unlock(&cifs_file_list_lock);
+	spin_unlock(&tcon->open_file_lock);
 	/*
 	 * BB Add call to invalidate_inodes(sb) for all superblocks mounted
 	 * to this tcon.
@@ -1424,6 +1424,8 @@ cifs_readv_discard(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 
 	length = discard_remaining_data(server);
 	dequeue_mid(mid, rdata->result);
+	mid->resp_buf = server->smallbuf;
+	server->smallbuf = NULL;
 	return length;
 }
 
@@ -1538,6 +1540,8 @@ cifs_readv_receive(struct TCP_Server_Info *server, struct mid_q_entry *mid)
 		return cifs_readv_discard(server, mid);
 
 	dequeue_mid(mid, false);
+	mid->resp_buf = server->smallbuf;
+	server->smallbuf = NULL;
 	return length;
 }
 
