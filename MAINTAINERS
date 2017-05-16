@@ -2804,6 +2804,30 @@ L:	alsa-devel@alsa-project.org (moderated for non-subscribers)
 S:	Maintained
 F:	sound/soc/codecs/cs*
 
+CIRRUS LOGIC MADERA CODEC DRIVERS
+L:	patches@opensource.wolfsonmicro.com
+T:	git https://github.com/CirrusLogic/linux-drivers.git
+W:	https://github.com/CirrusLogic/linux-drivers
+S:	Supported
+F:	Documentation/devicetree/bindings/mfd/madera.txt
+F:	Documentation/devicetree/bindings/interrupt-controller/cirrus,madera.txt
+F:	drivers/extcon/extcon-madera.c
+F:	drivers/gpio/gpio-madera.c
+F:	drivers/irqchip/irq-madera*
+F:	drivers/mfd/madera*
+F:	drivers/mfd/cs47l*
+F:	drivers/regulator/madera*.c
+F:	include/dt-bindings/sound/madera.h
+F:	include/dt-bindings/mfd/madera.h
+F:	include/dt-bindings/extcon/madera.h
+F:	include/linux/mfd/madera/
+F:	include/linux/extcon/extcon-madera*
+F:	include/linux/regulator/madera*
+F:	include/sound/madera-pdata.h
+F:	include/linux/irqchip/irq-madera*
+F:	sound/soc/codecs/madera.?
+F:	sound/soc/codecs/cs47l*
+
 CLEANCACHE API
 M:	Konrad Rzeszutek Wilk <konrad.wilk@oracle.com>
 L:	linux-kernel@vger.kernel.org

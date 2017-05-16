@@ -36,7 +36,6 @@ obj-$(CONFIG_MFD_TC6387XB)	+= tc6387xb.o tmio_core.o
 obj-$(CONFIG_MFD_TC6393XB)	+= tc6393xb.o tmio_core.o
 
 obj-$(CONFIG_MFD_ARIZONA)	+= arizona-core.o
-obj-$(CONFIG_MFD_ARIZONA)	+= arizona-irq.o
 obj-$(CONFIG_MFD_ARIZONA_I2C)	+= arizona-i2c.o
 obj-$(CONFIG_MFD_ARIZONA_SPI)	+= arizona-spi.o
 ifeq ($(CONFIG_MFD_WM5102),y)
@@ -62,6 +61,22 @@ wm8350-objs			+= wm8350-irq.o
 obj-$(CONFIG_MFD_WM8350)	+= wm8350.o
 obj-$(CONFIG_MFD_WM8350_I2C)	+= wm8350-i2c.o
 obj-$(CONFIG_MFD_WM8994)	+= wm8994-core.o wm8994-irq.o wm8994-regmap.o
+
+obj-$(CONFIG_MFD_MADERA)	+= madera-core.o
+obj-$(CONFIG_MFD_MADERA_I2C)	+= madera-i2c.o
+obj-$(CONFIG_MFD_MADERA_SPI)	+= madera-spi.o
+ifeq ($(CONFIG_MFD_CS47L35),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l35-tables.o
+endif
+ifeq ($(CONFIG_MFD_CS47L85),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l85-tables.o
+endif
+ifeq ($(CONFIG_MFD_CS47L90),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l90-tables.o
+endif
+ifeq ($(CONFIG_MFD_CS47L92),y)
+obj-$(CONFIG_MFD_MADERA)	+= cs47l92-tables.o
+endif
 
 obj-$(CONFIG_TPS6105X)		+= tps6105x.o
 obj-$(CONFIG_TPS65010)		+= tps65010.o
