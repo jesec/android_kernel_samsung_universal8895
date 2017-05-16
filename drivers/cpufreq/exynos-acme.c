@@ -907,7 +907,7 @@ static ssize_t store_cpufreq_min_limit(struct kobject *kobj,
 		scale++;
 
 		if (set_max) {
-			unsigned int qos = domain->max_freq;
+			unsigned int qos = cal_dfs_get_max_freq(domain->cal_id);
 
 			if (domain->user_default_qos)
 				qos = domain->user_default_qos;
@@ -946,7 +946,7 @@ static ssize_t store_cpufreq_min_limit(struct kobject *kobj,
 		else
 			control_hmp_boost(false);
 
-		freq = min(freq, domain->max_freq);
+		freq = min(freq, (unsigned int)cal_dfs_get_max_freq(domain->cal_id));
 		pm_qos_update_request(&domain->user_min_qos_req, freq);
 
 		set_max = true;
@@ -971,7 +971,7 @@ static ssize_t store_cpufreq_min_limit_wo_boost(struct kobject *kobj,
 		scale++;
 
 		if (set_max) {
-			unsigned int qos = domain->max_freq;
+			unsigned int qos = cal_dfs_get_max_freq(domain->cal_id);
 
 			if (domain->user_default_qos)
 				qos = domain->user_default_qos;
@@ -1009,7 +1009,7 @@ static ssize_t store_cpufreq_min_limit_wo_boost(struct kobject *kobj,
 			pr_info("HMP boost was already activated by cpufreq_min_limit node");
 #endif
 
-		freq = min(freq, domain->max_freq);
+		freq = min(freq, (unsigned int)cal_dfs_get_max_freq(domain->cal_id));
 		pm_qos_update_request(&domain->user_min_qos_wo_boost_req, freq);
 
 		set_max = true;
