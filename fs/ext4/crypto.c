@@ -432,6 +432,7 @@ int ext4_encrypted_zeroout(struct inode *inode, ext4_lblk_t lblk,
 				       GFP_NOFS);
 			if (err)
 				goto errout;
+
 #ifdef CONFIG_FMP_EXT4CRYPT_FS
 		} else {
 			memset(page_address(ciphertext_page), 0, PAGE_SIZE);
