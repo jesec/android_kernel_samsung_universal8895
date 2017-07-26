@@ -2820,8 +2820,6 @@ static void dwc3_gadget_conndone_interrupt(struct dwc3 *dwc)
 	speed = reg & DWC3_DSTS_CONNECTSPD;
 	dwc->speed = speed;
 
-	dwc3_update_ram_clk_sel(dwc, speed);
-
 	switch (speed) {
 	case DWC3_DCFG_SUPERSPEED:
 		/*
@@ -2837,6 +2835,9 @@ static void dwc3_gadget_conndone_interrupt(struct dwc3 *dwc)
 		 * STAR#9000483510: RTL: SS : USB3 reset event may
 		 * not be generated always when the link enters poll
 		 */
+		
+		dwc3_update_ram_clk_sel(dwc, speed);
+
 		if (dwc->revision < DWC3_REVISION_190A)
 			dwc3_gadget_reset_interrupt(dwc);
 
